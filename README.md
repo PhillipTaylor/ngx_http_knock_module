@@ -27,7 +27,7 @@ ngx_http_knock_module can provide that.
 
 #### Demonstration
 
-A demonstration of the [video is available here](https://www.youtube.com/watch?v=85Im_LfV2jQ).
+A demonstration of the [feature is available here](https://www.youtube.com/watch?v=85Im_LfV2jQ).
 
 #### Installation
 
