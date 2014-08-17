@@ -106,9 +106,9 @@ static ngx_int_t
 ngx_http_knock_handler(ngx_http_request_t *r)
 {
     ngx_http_knock_loc_conf_t  *alcf;
-	access_record *request_access_record;
-	ngx_str_t request_url;
-	in_addr_t request_ip_addr;
+    access_record *request_access_record;
+    ngx_str_t request_url;
+    in_addr_t request_ip_addr;
 
     alcf = ngx_http_get_module_loc_conf(r, ngx_http_knock_module);
 
@@ -116,130 +116,130 @@ ngx_http_knock_handler(ngx_http_request_t *r)
         return NGX_OK;
     }
 
-	request_url = ngx_http_knock_extract_url(r);
-	request_ip_addr = ngx_http_knock_extract_ip_addr(r);
+    request_url = ngx_http_knock_extract_url(r);
+    request_ip_addr = ngx_http_knock_extract_ip_addr(r);
 
     // search for access record in array (match on ip in request object)
-	request_access_record = ngx_http_knock_get_access_record(request_ip_addr);
+    request_access_record = ngx_http_knock_get_access_record(request_ip_addr);
 
-	if (request_access_record != NULL) {
-		if (request_access_record->auth_state == NGX_HTTP_KNOCK__TARGET_ALLOWED) {
-			// don't intercept traffic.
-    		return NGX_OK;
-		} else if (ngx_http_knock_is_successful_knock(request_access_record, alcf->knock_uris, request_url) == 1) {
-			// see if final knock.
-			if (request_access_record->auth_state + 1 == alcf->knock_uris->nelts) {
-				request_access_record->auth_state = NGX_HTTP_KNOCK__TARGET_ALLOWED;
-				ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-					"ngx_http_knock_module: location unlocked for ip: %s, auth_state: <GRANTED>, uri: %s",
-					request_ip_addr,
-					request_url
-				);
-			} else
-				request_access_record->auth_state++; // one step closer.
-		}
-	} else {
-		// new ip address. add to knock table only if they've hit first
-		// knock url.
-		if (ngx_http_knock_get_knock_uri_index(alcf->knock_uris, request_url) == 0) {
-			// add to table
-			request_access_record = ngx_http_knock_get_free_knock_slot(alcf->knock_uris);
-			request_access_record->ip_addr = request_ip_addr;
-			request_access_record->auth_state = 1;
-		}
-	}
+    if (request_access_record != NULL) {
+        if (request_access_record->auth_state == NGX_HTTP_KNOCK__TARGET_ALLOWED) {
+            // don't intercept traffic.
+            return NGX_OK;
+        } else if (ngx_http_knock_is_successful_knock(request_access_record, alcf->knock_uris, request_url) == 1) {
+            // see if final knock.
+            if (request_access_record->auth_state + 1 == alcf->knock_uris->nelts) {
+                request_access_record->auth_state = NGX_HTTP_KNOCK__TARGET_ALLOWED;
+                ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+                    "ngx_http_knock_module: location unlocked for ip: %s, auth_state: <GRANTED>, uri: %s",
+                    request_ip_addr,
+                    request_url
+                );
+            } else
+                request_access_record->auth_state++; // one step closer.
+        }
+    } else {
+        // new ip address. add to knock table only if they've hit first
+        // knock url.
+        if (ngx_http_knock_get_knock_uri_index(alcf->knock_uris, request_url) == 0) {
+            // add to table
+            request_access_record = ngx_http_knock_get_free_knock_slot(alcf->knock_uris);
+            request_access_record->ip_addr = request_ip_addr;
+            request_access_record->auth_state = 1;
+        }
+    }
 
-	if (request_access_record != NULL) {
-		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-			"ngx_http_knock_module: returning 404 for ip: %s, auth_state: %d, uri: %s",
-			request_ip_addr,
-			request_access_record->auth_state,
-			request_url
-		);
-	} else {
-		ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-			"ngx_http_knock_module: returning 404 for ip: %s, auth_state: <NO ENTRY>, uri: %s",
-			request_ip_addr,
-			request_url
-		);
-	}
+    if (request_access_record != NULL) {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+            "ngx_http_knock_module: returning 404 for ip: %s, auth_state: %d, uri: %s",
+            request_ip_addr,
+            request_access_record->auth_state,
+            request_url
+        );
+    } else {
+        ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+            "ngx_http_knock_module: returning 404 for ip: %s, auth_state: <NO ENTRY>, uri: %s",
+            request_ip_addr,
+            request_url
+        );
+    }
 
-	return NGX_HTTP_NOT_FOUND;
+    return NGX_HTTP_NOT_FOUND;
 
 }
 
 access_record
 *ngx_http_knock_get_access_record(in_addr_t ip_addr)
 {
-	ngx_uint_t i;
+    ngx_uint_t i;
 
-	for (i = 0; i < NGX_HTTP_KNOCK__IP_DB_SIZE && i < ngx_http_knock_next_free_slot; i++) {
-		if (access_records[i].ip_addr == ip_addr)
-			return (access_record*)&access_records[i];
-	}
+    for (i = 0; i < NGX_HTTP_KNOCK__IP_DB_SIZE && i < ngx_http_knock_next_free_slot; i++) {
+        if (access_records[i].ip_addr == ip_addr)
+            return (access_record*)&access_records[i];
+    }
 
-	return (access_record*)NULL;
+    return (access_record*)NULL;
 }
 
 ngx_uint_t
 ngx_http_knock_get_knock_uri_index(ngx_array_t *knock_uris, ngx_str_t url)
 {
-	ngx_uint_t i;
-	ngx_str_t *__knock_uris;
+    ngx_uint_t i;
+    ngx_str_t *__knock_uris;
 
-	if (knock_uris == NGX_CONF_UNSET_PTR)
-		return NGX_HTTP_KNOCK__NOT_KNOCK_URI;
+    if (knock_uris == NGX_CONF_UNSET_PTR)
+        return NGX_HTTP_KNOCK__NOT_KNOCK_URI;
 
-	__knock_uris = knock_uris->elts;
+    __knock_uris = knock_uris->elts;
 
-	for (i = 0; i < knock_uris->nelts; i++) {
-		if (ngx_strncmp((char*)__knock_uris[i].data, (char*)url.data, __knock_uris[i].len) == 0)
-			return i;
-	}
+    for (i = 0; i < knock_uris->nelts; i++) {
+        if (ngx_strncmp((char*)__knock_uris[i].data, (char*)url.data, __knock_uris[i].len) == 0)
+            return i;
+    }
 
-	return NGX_HTTP_KNOCK__NOT_KNOCK_URI;
+    return NGX_HTTP_KNOCK__NOT_KNOCK_URI;
 }
 
 ngx_uint_t
 ngx_http_knock_is_successful_knock(access_record *request_access_record, ngx_array_t *knock_uris, ngx_str_t url)
 {
-	ngx_uint_t knock_index;
+    ngx_uint_t knock_index;
 
-	knock_index = ngx_http_knock_get_knock_uri_index(knock_uris, url);
+    knock_index = ngx_http_knock_get_knock_uri_index(knock_uris, url);
 
-	if (knock_index == NGX_HTTP_KNOCK__NOT_KNOCK_URI)
-		return 0;
+    if (knock_index == NGX_HTTP_KNOCK__NOT_KNOCK_URI)
+        return 0;
 
-	if (request_access_record->auth_state == knock_index)
-		return 1;
+    if (request_access_record->auth_state == knock_index)
+        return 1;
 
-	return 0;
+    return 0;
 }
 
 access_record
 *ngx_http_knock_get_free_knock_slot(ngx_array_t *knock_uris)
 {
-	ngx_uint_t i, j;
+    ngx_uint_t i, j;
 
-	if (ngx_http_knock_next_free_slot + 1 == NGX_HTTP_KNOCK__IP_DB_SIZE) {
-		// db is full. scan for a record to throw away!
-		// discard lowest authed entries first.
-		// notice that if you have TARGET_ALLOWED, you wouldn't be
-		// subject for deletion as your auth_state is too high.
-		for (j = 0; j < knock_uris->nelts; j++) {
-			for (i = 0; i < NGX_HTTP_KNOCK__IP_DB_SIZE; i++) {
-				if (access_records[i].auth_state == j)
-					return &access_records[i];
-			}
-		}
+    if (ngx_http_knock_next_free_slot + 1 == NGX_HTTP_KNOCK__IP_DB_SIZE) {
+        // db is full. scan for a record to throw away!
+        // discard lowest authed entries first.
+        // notice that if you have TARGET_ALLOWED, you wouldn't be
+        // subject for deletion as your auth_state is too high.
+        for (j = 0; j < knock_uris->nelts; j++) {
+            for (i = 0; i < NGX_HTTP_KNOCK__IP_DB_SIZE; i++) {
+                if (access_records[i].auth_state == j)
+                    return &access_records[i];
+            }
+        }
 
-		//ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-		//		"Sorry no room in ngx_http_knock module's access_records array. please increase NGX_HTTP_KNOCK__IP_DB_SIZE and recompile"
-		//);
-		return NULL;
-	}
-	
-	return &access_records[ngx_http_knock_next_free_slot++];
+        //ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
+        //        "Sorry no room in ngx_http_knock module's access_records array. please increase NGX_HTTP_KNOCK__IP_DB_SIZE and recompile"
+        //);
+        return NULL;
+    }
+
+    return &access_records[ngx_http_knock_next_free_slot++];
 
 }
 
@@ -247,7 +247,7 @@ access_record
 ngx_str_t
 ngx_http_knock_extract_url(ngx_http_request_t *request)
 {
-	return request->uri;
+    return request->uri;
 }
 
 in_addr_t
@@ -256,7 +256,7 @@ ngx_http_knock_extract_ip_addr(ngx_http_request_t *r)
     struct sockaddr_in *sin;
 
     sin = (struct sockaddr_in *) r->connection->sockaddr;
-	return sin->sin_addr.s_addr;
+    return sin->sin_addr.s_addr;
 }
 
 /* this logic is about reading the configuration */
@@ -271,7 +271,7 @@ ngx_http_knock_create_loc_conf(ngx_conf_t *cf)
         return NGX_CONF_ERROR;
     }
     conf->enable = NGX_CONF_UNSET;
-	conf->knock_uris = NGX_CONF_UNSET_PTR;
+    conf->knock_uris = NGX_CONF_UNSET_PTR;
     return conf;
 }
 
@@ -281,24 +281,9 @@ ngx_http_knock_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
     ngx_http_knock_loc_conf_t  *prev = parent;
     ngx_http_knock_loc_conf_t  *conf = child;
-	//ngx_uint_t m, i;
+    //ngx_uint_t m, i;
 
     ngx_conf_merge_value(conf->enable, prev->enable, 0);
-	// TODO: MERGE ARRAYS
-    //ngx_conf_merge_value(conf->knock_uris, prev->knock_uris, 0);
-	//if (prev->knock_uris != NGX_CONF_UNSET_PTR) {
-	//	if (conf->knock_uris != NGX_CONF_UNSET_PTR) {
-
-	//		// merge arrays
-	//		ngx_array_init(
-
-
-	//		for (i = 0; i < prev->knock_uris->size; i++)
-	//			ngx_array_push(
-	//	} else {
-	//		conf->knock_uris = prev->knock_uris;
-	//	}
-	//}
     return NGX_CONF_OK;
 }
 
