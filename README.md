@@ -8,7 +8,7 @@ The port-knocking concept applied to websites. Hitting secret urls acts as a han
 
 #### Purpose
 
-The internet is full of bots which go around attacking brute forcing username/password login boxes and
+The internet is full of bots which go around attacking and brute forcing username/password login boxes and
 searching the internet for websites vulnerable to known security flaws (the webmaster hasn't had time to
 update) or zero-day exploits where no upgrade to a safe version is possible.
 
