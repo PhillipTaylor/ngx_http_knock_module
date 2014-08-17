@@ -25,6 +25,10 @@ This module takes that secret-handsake approach and applies it to websites. If y
 host-your-own projects such as roundmail, mysql web client, and you want to take extra steps to secure yourself
 ngx_http_knock_module can provide that.
 
+#### Demonstration
+
+	A demonstration of the [video is available here](https://www.youtube.com/watch?v=85Im_LfV2jQ).
+
 #### Installation
 
 Download the nginx software to your machine and unpack it. Download and untar the software from this github repo.
@@ -81,6 +85,15 @@ then try /yeah/but/did/you/guess/this, they still get a 404. Then when they retu
 the website is served up as they have completed the secret handshake. Most bots wouldn't waste their
 time trying to second guess those urls in the hope the server is listening!
 
+#### Notes
+
+* knock_uris must be hit in the sequence specified.
+* knock_uris have to pass through the nginx server obviously
+* uris that aren't a part of the knock sequence do not reset the person's place in the knock sequence.
+* the module is limited to 30,000 ips. change the #define line to increase or decreate this value.
+* this module was written against nginx 1.2.1
+
 Enjoy
 
 Phillip Taylor
+August 17th 2014.
