@@ -14,13 +14,6 @@
 #include <ngx_core.h>
 #include <ngx_http.h>
 
-// track at most 30000 ips trying to use system.
-// low number = potential denial of service through flushing variable buffer
-// low number = reduced maximum allowed connections
-// high number = higher ram usage
-// must be within bounds of data type: ngx_uint_t
-#define NGX_HTTP_KNOCK__IP_DB_SIZE 30000
-
 // hit value to be treated as authorised. needs to be higher than
 // sizeof(knock_uris) but stops us having to count each time.
 // must be within bounds of data type: ngx_unit_t
@@ -28,7 +21,7 @@
 
 #define NGX_HTTP_KNOCK__NOT_KNOCK_URI 10000
 
-// configuration
+// configuration related functions
 
 static ngx_int_t ngx_http_knock_handler(ngx_http_request_t *r);
 static void *ngx_http_knock_create_loc_conf(ngx_conf_t *cf);
@@ -84,29 +77,36 @@ ngx_module_t ngx_http_knock_module = {
     NGX_MODULE_V1_PADDING
 };
 
-// data structure for recording access records.
+// internal red-black tree structure for handling IPs and auth states
+typedef struct {
+    ngx_rbtree_key_t       key;
+    ngx_rbtree_node_t     *left;
+    ngx_rbtree_node_t     *right;
+    ngx_rbtree_node_t     *parent;
+    u_char                 color;
+    ngx_uint_t             auth_state;
+} ngx_http_knock_node_t;
 
-typedef struct _access_record {
-    in_addr_t ip_addr;
-    ngx_uint_t auth_state; /* where they are in the "hit order" */
-} access_record;
+ngx_rbtree_t *ngx_http_knock_tree;
 
-access_record access_records[NGX_HTTP_KNOCK__IP_DB_SIZE];
-
-ngx_uint_t ngx_http_knock_next_free_slot;
-
-access_record *ngx_http_knock_get_access_record(in_addr_t ip_addr);
-ngx_uint_t ngx_http_knock_get_knock_uri_index(ngx_array_t *knock_uris, ngx_str_t url);
-ngx_uint_t ngx_http_knock_is_successful_knock(access_record *request_access_record, ngx_array_t *knock_uris, ngx_str_t url);
-access_record *ngx_http_knock_get_free_knock_slot(ngx_array_t *knock_uris);
+// extract data from request
 ngx_str_t ngx_http_knock_extract_url(ngx_http_request_t *r);
 in_addr_t ngx_http_knock_extract_ip_addr(ngx_http_request_t *r);
+
+// find details for IP address
+ngx_http_knock_node_t *ngx_http_knock_get_knock_node(in_addr_t ip_addr);
+ngx_http_knock_node_t *ngx_http_knock_create_knock_node(in_addr_t ip_addr, ngx_http_request_t *r);
+inline ngx_uint_t ngx_http_knock_is_sentinel(ngx_http_knock_node_t *node);
+
+// identify knock details
+ngx_uint_t ngx_http_knock_get_knock_uri_index(ngx_array_t *knock_uris, ngx_str_t url);
+ngx_uint_t ngx_http_knock_is_successful_knock(ngx_uint_t auth_state, ngx_array_t *knock_uris, ngx_str_t url);
 
 static ngx_int_t
 ngx_http_knock_handler(ngx_http_request_t *r)
 {
     ngx_http_knock_loc_conf_t  *alcf;
-    access_record *request_access_record;
+    ngx_http_knock_node_t *request_knock_node;
     ngx_str_t request_url;
     in_addr_t request_ip_addr;
 
@@ -116,44 +116,41 @@ ngx_http_knock_handler(ngx_http_request_t *r)
         return NGX_OK;
     }
 
+	// pull the only data we care about out of the request
     request_url = ngx_http_knock_extract_url(r);
     request_ip_addr = ngx_http_knock_extract_ip_addr(r);
 
-    // search for access record in array (match on ip in request object)
-    request_access_record = ngx_http_knock_get_access_record(request_ip_addr);
+    // fetch the user's record
+    request_knock_node = ngx_http_knock_get_knock_node(request_ip_addr);
 
-    if (request_access_record != NULL) {
-        if (request_access_record->auth_state == NGX_HTTP_KNOCK__TARGET_ALLOWED) {
+    if (!ngx_http_knock_is_sentinel(request_knock_node)) {
+        if (request_knock_node->auth_state == NGX_HTTP_KNOCK__TARGET_ALLOWED) {
             // don't intercept traffic.
             return NGX_OK;
-        } else if (ngx_http_knock_is_successful_knock(request_access_record, alcf->knock_uris, request_url) == 1) {
+        } else if (ngx_http_knock_is_successful_knock(request_knock_node->auth_state, alcf->knock_uris, request_url) == 1) {
             // see if final knock.
-            if (request_access_record->auth_state + 1 == alcf->knock_uris->nelts) {
-                request_access_record->auth_state = NGX_HTTP_KNOCK__TARGET_ALLOWED;
+            if (request_knock_node->auth_state + 1 == alcf->knock_uris->nelts) {
+                request_knock_node->auth_state = NGX_HTTP_KNOCK__TARGET_ALLOWED;
                 ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
                     "ngx_http_knock_module: location unlocked for ip: %s, auth_state: <GRANTED>, uri: %s",
                     request_ip_addr,
                     request_url
                 );
             } else
-                request_access_record->auth_state++; // one step closer.
+                request_knock_node->auth_state++; // one step closer.
         }
     } else {
         // new ip address. add to knock table only if they've hit first
         // knock url.
-        if (ngx_http_knock_get_knock_uri_index(alcf->knock_uris, request_url) == 0) {
-            // add to table
-            request_access_record = ngx_http_knock_get_free_knock_slot(alcf->knock_uris);
-            request_access_record->ip_addr = request_ip_addr;
-            request_access_record->auth_state = 1;
-        }
+        if (ngx_http_knock_get_knock_uri_index(alcf->knock_uris, request_url) == 0)
+            request_knock_node = ngx_http_knock_create_knock_node(request_ip_addr, r);
     }
 
-    if (request_access_record != NULL) {
+    if (request_knock_node != NULL) {
         ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
             "ngx_http_knock_module: returning 404 for ip: %s, auth_state: %d, uri: %s",
             request_ip_addr,
-            request_access_record->auth_state,
+            request_knock_node->auth_state,
             request_url
         );
     } else {
@@ -168,18 +165,71 @@ ngx_http_knock_handler(ngx_http_request_t *r)
 
 }
 
-access_record
-*ngx_http_knock_get_access_record(in_addr_t ip_addr)
+// Functions related to extracting data from request
+
+ngx_str_t
+ngx_http_knock_extract_url(ngx_http_request_t *request)
 {
-    ngx_uint_t i;
-
-    for (i = 0; i < NGX_HTTP_KNOCK__IP_DB_SIZE && i < ngx_http_knock_next_free_slot; i++) {
-        if (access_records[i].ip_addr == ip_addr)
-            return (access_record*)&access_records[i];
-    }
-
-    return (access_record*)NULL;
+    return request->uri;
 }
+
+in_addr_t
+ngx_http_knock_extract_ip_addr(ngx_http_request_t *r)
+{
+    struct sockaddr_in *sin;
+
+    sin = (struct sockaddr_in *) r->connection->sockaddr;
+    return sin->sin_addr.s_addr;
+}
+
+// Functions related to finding/storing state information
+
+ngx_http_knock_node_t
+*ngx_http_knock_get_knock_node(in_addr_t ip_addr)
+{
+	ngx_rbtree_node_t *iter;
+
+	iter = ngx_http_knock_tree->root;
+
+	while (!ngx_http_knock_is_sentinel((ngx_http_knock_node_t*)iter)) {
+		if (iter->key == ip_addr)
+			return (ngx_http_knock_node_t*)iter;
+		else if (iter->key < ip_addr)
+			iter = iter->left;
+		else if (iter->key > ip_addr)
+			iter = iter->right;
+	}
+
+	return (ngx_http_knock_node_t*)iter;
+
+}
+
+// Assumes node definitely doesn't exist.
+// (called right after get_knock_node if it returns a sentinel)
+// TODO: don't require r->connection->log here
+
+ngx_http_knock_node_t
+*ngx_http_knock_create_knock_node(in_addr_t ip_addr, ngx_http_request_t *r)
+{
+
+	ngx_http_knock_node_t *new_node;
+	new_node = ngx_alloc(sizeof(ngx_http_knock_node_t), r->connection->log);
+
+	new_node->key = ip_addr;
+	new_node->auth_state = 1;
+
+	ngx_rbtree_insert(ngx_http_knock_tree, (ngx_rbtree_node_t*)new_node);
+
+	return new_node;
+}
+
+inline ngx_uint_t
+ngx_http_knock_is_sentinel(ngx_http_knock_node_t *node)
+{
+	return ((ngx_rbtree_node_t*)node == ngx_http_knock_tree->sentinel);
+}
+
+// Functions related to knocking details
 
 ngx_uint_t
 ngx_http_knock_get_knock_uri_index(ngx_array_t *knock_uris, ngx_str_t url)
@@ -201,7 +251,7 @@ ngx_http_knock_get_knock_uri_index(ngx_array_t *knock_uris, ngx_str_t url)
 }
 
 ngx_uint_t
-ngx_http_knock_is_successful_knock(access_record *request_access_record, ngx_array_t *knock_uris, ngx_str_t url)
+ngx_http_knock_is_successful_knock(ngx_uint_t auth_state, ngx_array_t *knock_uris, ngx_str_t url)
 {
     ngx_uint_t knock_index;
 
@@ -210,56 +260,13 @@ ngx_http_knock_is_successful_knock(access_record *request_access_record, ngx_arr
     if (knock_index == NGX_HTTP_KNOCK__NOT_KNOCK_URI)
         return 0;
 
-    if (request_access_record->auth_state == knock_index)
+    if (auth_state == knock_index)
         return 1;
 
     return 0;
 }
 
-access_record
-*ngx_http_knock_get_free_knock_slot(ngx_array_t *knock_uris)
-{
-    ngx_uint_t i, j;
-
-    if (ngx_http_knock_next_free_slot + 1 == NGX_HTTP_KNOCK__IP_DB_SIZE) {
-        // db is full. scan for a record to throw away!
-        // discard lowest authed entries first.
-        // notice that if you have TARGET_ALLOWED, you wouldn't be
-        // subject for deletion as your auth_state is too high.
-        for (j = 0; j < knock_uris->nelts; j++) {
-            for (i = 0; i < NGX_HTTP_KNOCK__IP_DB_SIZE; i++) {
-                if (access_records[i].auth_state == j)
-                    return &access_records[i];
-            }
-        }
-
-        //ngx_log_error(NGX_LOG_INFO, r->connection->log, 0,
-        //        "Sorry no room in ngx_http_knock module's access_records array. please increase NGX_HTTP_KNOCK__IP_DB_SIZE and recompile"
-        //);
-        return NULL;
-    }
-
-    return &access_records[ngx_http_knock_next_free_slot++];
-
-}
-
-
-ngx_str_t
-ngx_http_knock_extract_url(ngx_http_request_t *request)
-{
-    return request->uri;
-}
-
-in_addr_t
-ngx_http_knock_extract_ip_addr(ngx_http_request_t *r)
-{
-    struct sockaddr_in *sin;
-
-    sin = (struct sockaddr_in *) r->connection->sockaddr;
-    return sin->sin_addr.s_addr;
-}
-
-/* this logic is about reading the configuration */
+// Functions related to configuration parsing
 
 static void *
 ngx_http_knock_create_loc_conf(ngx_conf_t *cf)
@@ -281,7 +288,6 @@ ngx_http_knock_merge_loc_conf(ngx_conf_t *cf, void *parent, void *child)
 {
     ngx_http_knock_loc_conf_t  *prev = parent;
     ngx_http_knock_loc_conf_t  *conf = child;
-    //ngx_uint_t m, i;
 
     ngx_conf_merge_value(conf->enable, prev->enable, 0);
     return NGX_CONF_OK;
@@ -293,7 +299,14 @@ ngx_http_knock_init(ngx_conf_t *cf)
     ngx_http_handler_pt        *h;
     ngx_http_core_main_conf_t  *cmcf;
 
-    ngx_http_knock_next_free_slot = 0;
+	ngx_http_knock_tree = ngx_palloc(cf->pool, sizeof(ngx_rbtree_t));
+
+	ngx_http_knock_node_t *sentinel;
+	sentinel = ngx_palloc(cf->pool, sizeof(ngx_http_knock_node_t));
+	sentinel->key = 0;
+	sentinel->auth_state = -1000;
+
+	ngx_rbtree_init(ngx_http_knock_tree, (ngx_rbtree_node_t*)sentinel, ngx_rbtree_insert_value);
 
     // install our handler.
     cmcf = ngx_http_conf_get_module_main_conf(cf, ngx_http_core_module);
